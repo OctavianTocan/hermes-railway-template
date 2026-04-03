@@ -136,9 +136,17 @@ Entrypoint (`scripts/entrypoint.sh`) does the following:
 
 ## Build pinning
 
-Docker build arg:
+Docker build args:
 
 - `HERMES_GIT_REF` (default: `main`)
+- `NODE_MAJOR` (default: `22`)
+- `PNPM_VERSION`
+- `YARN_VERSION`
+- `NPM_VERSION`
+- `BUN_VERSION`
+- `CLAUDE_CODE_VERSION`
+- `CODEX_VERSION`
+- `UV_VERSION`
 
 Override in Railway if you want to pin a tag or commit.
 
