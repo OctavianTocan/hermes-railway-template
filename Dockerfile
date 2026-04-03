@@ -18,28 +18,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -e "/opt/hermes-agent[messaging,cron,cli,pty]"
 
 
-FROM python:3.11-slim AS runtime-base
-
-RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    tini \
-  && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/opt/venv/bin:${PATH}" \
-  PYTHONUNBUFFERED=1 \
-  HERMES_HOME=/data/.hermes \
-  HOME=/data
-
-COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /opt/hermes-agent /opt/hermes-agent
-
-WORKDIR /app
-COPY scripts/entrypoint.sh /app/scripts/entrypoint.sh
-RUN chmod +x /app/scripts/entrypoint.sh
-
-
-FROM runtime-base AS dev
+FROM python:3.11-slim
 
 ARG NODE_MAJOR=22
 ARG PNPM_VERSION=10.33.0
@@ -53,6 +32,8 @@ ARG UV_VERSION=0.11.3
 # ── Core system packages + dev tools ────────────────────────────────────────
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tini \
     git \
     curl \
     wget \
@@ -123,11 +104,18 @@ RUN bash -o pipefail -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.s
   && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
   && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
 
-ENTRYPOINT ["tini", "--"]
-CMD ["/app/scripts/entrypoint.sh"]
+# ── Hermes venv + source from builder ──────────────────────────────────────
+ENV PATH="/opt/venv/bin:${PATH}" \
+  PYTHONUNBUFFERED=1 \
+  HERMES_HOME=/data/.hermes \
+  HOME=/data
 
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/hermes-agent /opt/hermes-agent
 
-FROM runtime-base AS runtime
+WORKDIR /app
+COPY scripts/entrypoint.sh /app/scripts/entrypoint.sh
+RUN chmod +x /app/scripts/entrypoint.sh
 
 ENTRYPOINT ["tini", "--"]
 CMD ["/app/scripts/entrypoint.sh"]

@@ -139,20 +139,18 @@ Entrypoint (`scripts/entrypoint.sh`) does the following:
 Docker build args:
 
 - `HERMES_GIT_REF` (default: `main`)
-- `NODE_MAJOR` (dev target only, default: `22`)
-- `PNPM_VERSION` (dev target only)
-- `YARN_VERSION` (dev target only)
-- `NPM_VERSION` (dev target only)
-- `BUN_VERSION` (dev target only)
-- `CLAUDE_CODE_VERSION` (dev target only)
-- `CODEX_VERSION` (dev target only)
-- `UV_VERSION` (dev target only)
+- `NODE_MAJOR` (default: `22`)
+- `PNPM_VERSION`
+- `YARN_VERSION`
+- `NPM_VERSION`
+- `BUN_VERSION`
+- `CLAUDE_CODE_VERSION`
+- `CODEX_VERSION`
+- `UV_VERSION`
 
 Override in Railway if you want to pin a tag or commit.
 
 ## Local smoke test
-
-The default build target is the lean Railway runtime image:
 
 ```bash
 docker build -t hermes-railway-template .
@@ -163,10 +161,4 @@ docker run --rm \
   -e TELEGRAM_ALLOWED_USERS=123456789 \
   -v "$(pwd)/.tmpdata:/data" \
   hermes-railway-template
-```
-
-If you want the full developer toolbox locally, build the `dev` stage explicitly:
-
-```bash
-docker build --target dev -t hermes-railway-template:dev .
 ```
