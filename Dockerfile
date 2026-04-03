@@ -23,7 +23,6 @@ FROM python:3.11-slim
 ARG NODE_MAJOR=22
 ARG PNPM_VERSION=10.33.0
 ARG YARN_VERSION=1.22.22
-ARG NPM_VERSION=11.12.1
 ARG BUN_VERSION=1.3.11
 ARG CLAUDE_CODE_VERSION=2.1.91
 ARG CODEX_VERSION=0.118.0
@@ -66,8 +65,7 @@ RUN bash -o pipefail -c "curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJO
   && command -v npm >/dev/null \
   && corepack enable \
   && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
-  && corepack prepare "yarn@${YARN_VERSION}" --activate \
-  && npm install -g "npm@${NPM_VERSION}"
+  && corepack prepare "yarn@${YARN_VERSION}" --activate
 
 # ── Bun ─────────────────────────────────────────────────────────────────────
 RUN arch="$(dpkg --print-architecture)" \
