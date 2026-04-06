@@ -123,4 +123,9 @@ if [[ -z "${TELEGRAM_ALLOWED_USERS:-}${DISCORD_ALLOWED_USERS:-}${SLACK_ALLOWED_U
 fi
 
 echo "[bootstrap] Starting Hermes gateway..."
-exec hermes gateway
+while true; do
+  hermes gateway
+  exit_code=$?
+  echo "[bootstrap] Gateway exited (code=$exit_code), restarting in 5s..."
+  sleep 5
+done

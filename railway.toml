@@ -2,7 +2,7 @@
 builder = "dockerfile"
 
 [deploy]
-restartPolicyType = "on_failure"
+restartPolicyType = "always"
 requiredMountPath = "/data"
 
 [variables]
