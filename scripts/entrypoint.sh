@@ -124,8 +124,10 @@ fi
 
 echo "[bootstrap] Starting Hermes gateway..."
 while true; do
+  set +e
   hermes gateway
   exit_code=$?
+  set -e
   echo "[bootstrap] Gateway exited (code=$exit_code), restarting in 5s..."
   sleep 5
 done
