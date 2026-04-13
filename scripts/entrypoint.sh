@@ -111,12 +111,12 @@ ENV_KEYS=(
 )
 
 # Write a .env file for a given profile index.
-# $1 = target .env path, $2 = profile index (0 = default)
+# $1 = target .env path, $2 = profile index (0 = default), $3 = HERMES_HOME for this profile
 write_env_file() {
-  local target_env="$1" profile_idx="$2"
+  local target_env="$1" profile_idx="$2" profile_home="${3:-${HERMES_HOME}}"
   {
     echo "# Managed by entrypoint.sh (profile index ${profile_idx})"
-    echo "HERMES_HOME=${HERMES_HOME}"
+    echo "HERMES_HOME=${profile_home}"
     echo "MESSAGING_CWD=${MESSAGING_CWD}"
   } > "$target_env"
 
@@ -160,7 +160,7 @@ for profile_name in "${PROFILES[@]}"; do
   mkdir -p "${PROFILE_DIR}" "${PROFILE_DIR}/logs" "${PROFILE_DIR}/sessions" "${PROFILE_DIR}/skills" "${PROFILE_DIR}/cron" "${PROFILE_DIR}/pairing"
 
   echo "[bootstrap] Writing runtime env for profile '${profile_name}' (index ${PROFILE_INDEX})"
-  write_env_file "$PROFILE_ENV" "$PROFILE_INDEX"
+  write_env_file "$PROFILE_ENV" "$PROFILE_INDEX" "$PROFILE_DIR"
 
   PROFILE_INDEX=$((PROFILE_INDEX + 1))
 done
