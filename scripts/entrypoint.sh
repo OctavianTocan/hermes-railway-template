@@ -26,10 +26,15 @@ is_true() {
 #
 # Example:
 #   HERMES_PROFILES=esther
-#   TELEGRAM_BOT_TOKEN=default-token|esther-token
-#   OPENROUTER_API_KEY=sk-shared      (no pipe → same key for everyone)
+#   TELEGRAM_BOT_TOKEN=defaul...oken
+#   OPENROUTER_API_KEY=***      (no pipe → same key for everyone)
 #
 # Comma is preserved as an in-value separator (e.g. allowed user lists).
+#
+# Per-profile env var exclusions:
+#   HERMES_PROFILE_EXCLUDE_<NAME>=VAR1,VAR2,...
+#   e.g. HERMES_PROFILE_EXCLUDE_ESTHER=SLACK_BOT_TOKEN,SLACK_APP_TOKEN
+#   Excluded vars are not written to that profile's .env.
 
 # Extract value at index $2 from pipe-separated string $1.
 # Falls back to index 0 if the requested index doesn't exist (shared value).
@@ -112,15 +117,27 @@ ENV_KEYS=(
 
 # Write a .env file for a given profile index.
 # $1 = target .env path, $2 = profile index (0 = default), $3 = HERMES_HOME for this profile
+# $4 = comma-separated list of env var names to exclude (optional)
 write_env_file() {
-  local target_env="$1" profile_idx="$2" profile_home="${3:-${HERMES_HOME}}"
+  local target_env="$1" profile_idx="$2" profile_home="${3:-${HERMES_HOME}}" excludes="${4:-}"
   {
     echo "# Managed by entrypoint.sh (profile index ${profile_idx})"
     echo "HERMES_HOME=${profile_home}"
     echo "MESSAGING_CWD=${MESSAGING_CWD}"
   } > "$target_env"
 
+  # Build an associative array of excluded keys for O(1) lookup
+  declare -A exclude_map
+  if [[ -n "$excludes" ]]; then
+    IFS=',' read -ra exclude_list <<< "$excludes"
+    for ex in "${exclude_list[@]}"; do
+      ex="$(echo "$ex" | tr -d '[:space:]')"
+      [[ -n "$ex" ]] && exclude_map["$ex"]=1
+    done
+  fi
+
   for key in "${ENV_KEYS[@]}"; do
+    [[ -n "${exclude_map[$key]+x}" ]] && continue
     local raw="${!key:-}"
     if [[ -n "$raw" ]]; then
       local resolved
@@ -159,8 +176,13 @@ for profile_name in "${PROFILES[@]}"; do
 
   mkdir -p "${PROFILE_DIR}" "${PROFILE_DIR}/logs" "${PROFILE_DIR}/sessions" "${PROFILE_DIR}/skills" "${PROFILE_DIR}/cron" "${PROFILE_DIR}/pairing"
 
+  # Check for per-profile env var exclusions: HERMES_PROFILE_EXCLUDE_<NAME>
+  local_exclude_var="HERMES_PROFILE_EXCLUDE_$(echo "$profile_name" | tr '[:lower:]' '[:upper:]')"
+  local_excludes="${!local_exclude_var:-}"
+
   echo "[bootstrap] Writing runtime env for profile '${profile_name}' (index ${PROFILE_INDEX})"
-  write_env_file "$PROFILE_ENV" "$PROFILE_INDEX" "$PROFILE_DIR"
+  [[ -n "$local_excludes" ]] && echo "[bootstrap]   excluding: ${local_excludes}"
+  write_env_file "$PROFILE_ENV" "$PROFILE_INDEX" "$PROFILE_DIR" "$local_excludes"
 
   PROFILE_INDEX=$((PROFILE_INDEX + 1))
 done

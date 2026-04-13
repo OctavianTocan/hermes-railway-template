@@ -17,6 +17,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -e "/opt/hermes-agent[messaging,cron,cli,pty]"
 RUN pip install --no-cache-dir "mcp>=1.2.0,<2" --break-system-packages
+RUN pip install --no-cache-dir "hindsight-client>=0.5.0"
 
 
 FROM python:3.11-slim
