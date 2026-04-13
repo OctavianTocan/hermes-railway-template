@@ -18,7 +18,39 @@ is_true() {
   esac
 }
 
+# ── Multi-profile support ────────────────────────────────────────────────────
+#
+# Env vars can contain pipe-separated values for multi-profile setups.
+# Index 0 = default profile, index 1+ = additional profiles from HERMES_PROFILES.
+# If a var has no pipe, the single value is shared across all profiles.
+#
+# Example:
+#   HERMES_PROFILES=esther
+#   TELEGRAM_BOT_TOKEN=default-token|esther-token
+#   OPENROUTER_API_KEY=sk-shared      (no pipe → same key for everyone)
+#
+# Comma is preserved as an in-value separator (e.g. allowed user lists).
+
+# Extract value at index $2 from pipe-separated string $1.
+# Falls back to index 0 if the requested index doesn't exist (shared value).
+get_profile_value() {
+  local raw="$1" idx="${2:-0}"
+  if [[ "$raw" != *"|"* ]]; then
+    # No pipe → shared value, return as-is for every index.
+    echo "$raw"
+    return
+  fi
+  IFS='|' read -ra parts <<< "$raw"
+  if [[ $idx -lt ${#parts[@]} ]]; then
+    echo "${parts[$idx]}"
+  else
+    echo "${parts[0]}"
+  fi
+}
+
 validate_platforms() {
+  # Validate that at least one platform token exists in the raw env
+  # (before pipe-splitting — any token at any index counts).
   local count=0
 
   if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
@@ -44,6 +76,7 @@ validate_platforms() {
 }
 
 has_valid_provider_config() {
+  # Check raw env (before pipe-split). Any provider key at any index counts.
   if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
     return 0
   fi
@@ -59,13 +92,45 @@ has_valid_provider_config() {
   return 1
 }
 
-append_if_set() {
-  local key="$1"
-  local val="${!key:-}"
-  if [[ -n "$val" ]]; then
-    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
-  fi
+# ── Env var passthrough list ─────────────────────────────────────────────────
+# All vars that get written to each profile's .env.
+# Pipe-separated values are resolved per-profile by write_env_file().
+
+ENV_KEYS=(
+  OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_BASE_URL ANTHROPIC_API_KEY LLM_MODEL HERMES_INFERENCE_PROVIDER HERMES_PORTAL_BASE_URL NOUS_INFERENCE_BASE_URL HERMES_NOUS_MIN_KEY_TTL_SECONDS HERMES_DUMP_REQUESTS
+  TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS TELEGRAM_ALLOW_ALL_USERS TELEGRAM_HOME_CHANNEL TELEGRAM_HOME_CHANNEL_NAME
+  DISCORD_BOT_TOKEN DISCORD_ALLOWED_USERS DISCORD_ALLOW_ALL_USERS DISCORD_HOME_CHANNEL DISCORD_HOME_CHANNEL_NAME DISCORD_REQUIRE_MENTION DISCORD_FREE_RESPONSE_CHANNELS
+  SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS SLACK_ALLOW_ALL_USERS SLACK_HOME_CHANNEL SLACK_HOME_CHANNEL_NAME WHATSAPP_ENABLED WHATSAPP_ALLOWED_USERS
+  GATEWAY_ALLOW_ALL_USERS
+  FIRECRAWL_API_KEY NOUS_API_KEY BROWSERBASE_API_KEY BROWSERBASE_PROJECT_ID BROWSERBASE_PROXIES BROWSERBASE_ADVANCED_STEALTH BROWSER_SESSION_TIMEOUT BROWSER_INACTIVITY_TIMEOUT FAL_KEY ELEVENLABS_API_KEY VOICE_TOOLS_OPENAI_KEY
+  TINKER_API_KEY WANDB_API_KEY RL_API_URL GITHUB_TOKEN
+  TERMINAL_ENV TERMINAL_BACKEND TERMINAL_DOCKER_IMAGE TERMINAL_SINGULARITY_IMAGE TERMINAL_MODAL_IMAGE TERMINAL_CWD TERMINAL_TIMEOUT TERMINAL_LIFETIME_SECONDS TERMINAL_CONTAINER_CPU TERMINAL_CONTAINER_MEMORY TERMINAL_CONTAINER_DISK TERMINAL_CONTAINER_PERSISTENT TERMINAL_SANDBOX_DIR TERMINAL_SSH_HOST TERMINAL_SSH_USER TERMINAL_SSH_PORT TERMINAL_SSH_KEY SUDO_PASSWORD
+  WEB_TOOLS_DEBUG VISION_TOOLS_DEBUG MOA_TOOLS_DEBUG IMAGE_TOOLS_DEBUG CONTEXT_COMPRESSION_ENABLED CONTEXT_COMPRESSION_THRESHOLD CONTEXT_COMPRESSION_MODEL HERMES_MAX_ITERATIONS HERMES_TOOL_PROGRESS HERMES_TOOL_PROGRESS_MODE
+  EXA_API_KEY FIREFLIES_API_KEY NOTION_API_KEY
+  HINDSIGHT_API_URL HINDSIGHT_API_KEY
+)
+
+# Write a .env file for a given profile index.
+# $1 = target .env path, $2 = profile index (0 = default)
+write_env_file() {
+  local target_env="$1" profile_idx="$2"
+  {
+    echo "# Managed by entrypoint.sh (profile index ${profile_idx})"
+    echo "HERMES_HOME=${HERMES_HOME}"
+    echo "MESSAGING_CWD=${MESSAGING_CWD}"
+  } > "$target_env"
+
+  for key in "${ENV_KEYS[@]}"; do
+    local raw="${!key:-}"
+    if [[ -n "$raw" ]]; then
+      local resolved
+      resolved="$(get_profile_value "$raw" "$profile_idx")"
+      printf '%s=%s\n' "$key" "$resolved" >> "$target_env"
+    fi
+  done
 }
+
+# ── Validation ───────────────────────────────────────────────────────────────
 
 if ! has_valid_provider_config; then
   echo "[bootstrap] ERROR: Configure a provider: OPENROUTER_API_KEY, or OPENAI_BASE_URL+OPENAI_API_KEY, or ANTHROPIC_API_KEY." >&2
@@ -74,28 +139,33 @@ fi
 
 validate_platforms
 
-echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
-{
-  echo "# Managed by entrypoint.sh"
-  echo "HERMES_HOME=${HERMES_HOME}"
-  echo "MESSAGING_CWD=${MESSAGING_CWD}"
-} > "$ENV_FILE"
+# ── Write default profile .env (index 0) ─────────────────────────────────────
 
-for key in \
-  OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_BASE_URL ANTHROPIC_API_KEY LLM_MODEL HERMES_INFERENCE_PROVIDER HERMES_PORTAL_BASE_URL NOUS_INFERENCE_BASE_URL HERMES_NOUS_MIN_KEY_TTL_SECONDS HERMES_DUMP_REQUESTS \
-  TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS TELEGRAM_ALLOW_ALL_USERS TELEGRAM_HOME_CHANNEL TELEGRAM_HOME_CHANNEL_NAME \
-  DISCORD_BOT_TOKEN DISCORD_ALLOWED_USERS DISCORD_ALLOW_ALL_USERS DISCORD_HOME_CHANNEL DISCORD_HOME_CHANNEL_NAME DISCORD_REQUIRE_MENTION DISCORD_FREE_RESPONSE_CHANNELS \
-  SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS SLACK_ALLOW_ALL_USERS SLACK_HOME_CHANNEL SLACK_HOME_CHANNEL_NAME WHATSAPP_ENABLED WHATSAPP_ALLOWED_USERS \
-  GATEWAY_ALLOW_ALL_USERS \
-  FIRECRAWL_API_KEY NOUS_API_KEY BROWSERBASE_API_KEY BROWSERBASE_PROJECT_ID BROWSERBASE_PROXIES BROWSERBASE_ADVANCED_STEALTH BROWSER_SESSION_TIMEOUT BROWSER_INACTIVITY_TIMEOUT FAL_KEY ELEVENLABS_API_KEY VOICE_TOOLS_OPENAI_KEY \
-  TINKER_API_KEY WANDB_API_KEY RL_API_URL GITHUB_TOKEN \
-  TERMINAL_ENV TERMINAL_BACKEND TERMINAL_DOCKER_IMAGE TERMINAL_SINGULARITY_IMAGE TERMINAL_MODAL_IMAGE TERMINAL_CWD TERMINAL_TIMEOUT TERMINAL_LIFETIME_SECONDS TERMINAL_CONTAINER_CPU TERMINAL_CONTAINER_MEMORY TERMINAL_CONTAINER_DISK TERMINAL_CONTAINER_PERSISTENT TERMINAL_SANDBOX_DIR TERMINAL_SSH_HOST TERMINAL_SSH_USER TERMINAL_SSH_PORT TERMINAL_SSH_KEY SUDO_PASSWORD \
-  WEB_TOOLS_DEBUG VISION_TOOLS_DEBUG MOA_TOOLS_DEBUG IMAGE_TOOLS_DEBUG CONTEXT_COMPRESSION_ENABLED CONTEXT_COMPRESSION_THRESHOLD CONTEXT_COMPRESSION_MODEL HERMES_MAX_ITERATIONS HERMES_TOOL_PROGRESS HERMES_TOOL_PROGRESS_MODE \
-  EXA_API_KEY FIREFLIES_API_KEY NOTION_API_KEY \
-  HINDSIGHT_API_URL HINDSIGHT_API_KEY
-do
-  append_if_set "$key"
+echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
+write_env_file "$ENV_FILE" 0
+
+# ── Bootstrap additional profiles ─────────────────────────────────────────────
+
+IFS=',' read -ra PROFILES <<< "${HERMES_PROFILES:-}"
+PROFILE_INDEX=1
+
+for profile_name in "${PROFILES[@]}"; do
+  # Skip empty entries (e.g. trailing comma)
+  profile_name="$(echo "$profile_name" | tr -d '[:space:]')"
+  [[ -z "$profile_name" ]] && continue
+
+  PROFILE_DIR="${HERMES_HOME}/profiles/${profile_name}"
+  PROFILE_ENV="${PROFILE_DIR}/.env"
+
+  mkdir -p "${PROFILE_DIR}" "${PROFILE_DIR}/logs" "${PROFILE_DIR}/sessions" "${PROFILE_DIR}/skills" "${PROFILE_DIR}/cron" "${PROFILE_DIR}/pairing"
+
+  echo "[bootstrap] Writing runtime env for profile '${profile_name}' (index ${PROFILE_INDEX})"
+  write_env_file "$PROFILE_ENV" "$PROFILE_INDEX"
+
+  PROFILE_INDEX=$((PROFILE_INDEX + 1))
 done
+
+# ── First-time init + config ─────────────────────────────────────────────────
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "[bootstrap] Creating ${CONFIG_FILE}"
@@ -123,12 +193,62 @@ if [[ -z "${TELEGRAM_ALLOWED_USERS:-}${DISCORD_ALLOWED_USERS:-}${SLACK_ALLOWED_U
   fi
 fi
 
-echo "[bootstrap] Starting Hermes gateway..."
+# ── Launch gateways ──────────────────────────────────────────────────────────
+
+# Associative array: PID → label (for restart tracking)
+declare -A GATEWAY_PIDS
+declare -A GATEWAY_CMDS
+
+start_gateway() {
+  local label="$1"
+  shift
+  "$@" &
+  local pid=$!
+  GATEWAY_PIDS[$pid]="$label"
+  GATEWAY_CMDS[$pid]="$*"
+  echo "[bootstrap] Started gateway '${label}' (PID ${pid})"
+}
+
+# Forward SIGTERM/SIGINT to all children for graceful shutdown
+cleanup() {
+  echo "[bootstrap] Shutting down all gateways..."
+  for pid in "${!GATEWAY_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  wait
+  exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+echo "[bootstrap] Starting Hermes gateways..."
+
+# Default profile gateway
+start_gateway "default" hermes gateway
+
+# Additional profile gateways
+for profile_name in "${PROFILES[@]}"; do
+  profile_name="$(echo "$profile_name" | tr -d '[:space:]')"
+  [[ -z "$profile_name" ]] && continue
+  start_gateway "$profile_name" hermes -p "$profile_name" gateway
+done
+
+# Restart loop: if any gateway exits, restart only that one.
 while true; do
+  # wait -n exits when any child terminates, returns its exit code.
   set +e
-  hermes gateway
+  wait -n -p EXITED_PID
   exit_code=$?
   set -e
-  echo "[bootstrap] Gateway exited (code=$exit_code), restarting in 5s..."
-  sleep 5
+
+  if [[ -n "${EXITED_PID:-}" && -n "${GATEWAY_PIDS[$EXITED_PID]+x}" ]]; then
+    label="${GATEWAY_PIDS[$EXITED_PID]}"
+    cmd="${GATEWAY_CMDS[$EXITED_PID]}"
+    unset "GATEWAY_PIDS[$EXITED_PID]"
+    unset "GATEWAY_CMDS[$EXITED_PID]"
+    echo "[bootstrap] Gateway '${label}' exited (code=${exit_code}), restarting in 5s..."
+    sleep 5
+    start_gateway "$label" $cmd
+  fi
 done

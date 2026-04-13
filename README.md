@@ -12,13 +12,14 @@ This template is worker-only: setup and configuration are done through Railway V
 - First-boot bootstrap from environment variables
 - Persistent Hermes state on a Railway volume at `/data`
 - Telegram, Discord, or Slack support (at least one required)
+- Multi-profile support: run multiple independent agents from one service
 
 ## How it works
 
 1. You configure required variables in Railway.
 2. On first boot, entrypoint initializes Hermes under `/data/.hermes`.
 3. On future boots, the same persisted state is reused.
-4. Container starts `hermes gateway`.
+4. Container starts `hermes gateway` (plus one per additional profile).
 
 ## Railway deploy instructions
 
@@ -39,8 +40,8 @@ Template defaults (already included in `railway.toml`):
 This template defaults to Telegram + OpenRouter. These are the default variables to fill when deploying:
 
 ```env
-OPENROUTER_API_KEY=""
-TELEGRAM_BOT_TOKEN=""
+OPENROUTER_API_KEY=***
+TELEGRAM_BOT_TOKEN=***
 TELEGRAM_ALLOWED_USERS=""
 ```
 
@@ -86,6 +87,58 @@ Provider selection tip:
 
 - If you set multiple provider keys, set `HERMES_INFERENCE_PROVIDER` (for example: `openrouter`) to avoid auto-selection surprises.
 
+## Multi-profile support
+
+Run multiple independent Hermes agents from a single Railway service. Each profile gets its own gateway process, memory, sessions, skills, and configuration.
+
+### Setup
+
+1. Create profiles on the persistent volume (via Railway SSH or terminal):
+   ```bash
+   hermes profile create myprofile --clone
+   ```
+2. Set `HERMES_PROFILES` in Railway Variables:
+   ```env
+   HERMES_PROFILES=myprofile
+   ```
+3. For variables that differ between profiles, use pipe-separated values:
+   ```env
+   TELEGRAM_BOT_TOKEN=default-token|myprofile-token
+   TELEGRAM_ALLOWED_USERS=111111111|222222222,111111111
+   ```
+
+### How pipe-separated values work
+
+- Index 0 (left of first pipe) → default profile
+- Index 1 → first profile in `HERMES_PROFILES`
+- Index 2 → second profile, and so on
+- **No pipe** → value is shared across all profiles
+- Comma is preserved as an in-value separator (e.g. multiple allowed users)
+
+Example with two profiles (`HERMES_PROFILES=alice,bob`):
+
+```env
+# Shared (all three profiles get the same key)
+OPENROUTER_API_KEY=sk-shared-key
+
+# Per-profile (index 0=default, 1=alice, 2=bob)
+TELEGRAM_BOT_TOKEN=default-token|alice-token|bob-token
+TELEGRAM_ALLOWED_USERS=111|222,111|333,111
+TELEGRAM_HOME_CHANNEL=111|222|333
+```
+
+### Backward compatibility
+
+If `HERMES_PROFILES` is unset and no env vars contain pipes, the entrypoint behaves exactly like a single-profile setup. No changes needed for existing deployments.
+
+### Process management
+
+Each profile runs its own `hermes gateway` process. If one crashes, only that gateway restarts (after 5 seconds). The others keep running. On Railway shutdown (SIGTERM), all gateways receive the signal and shut down gracefully.
+
+### Profile configuration
+
+Each profile's config, memory, and skills live on the persistent volume under `$HERMES_HOME/profiles/<name>/`. The entrypoint manages `.env` files automatically. Everything else (config.yaml, system prompt, skills, memory) is configured per-profile on the volume.
+
 ## Environment variable reference
 
 For the full and up-to-date list, check out the [Hermes repository](https://github.com/NousResearch/hermes-agent).
@@ -116,6 +169,7 @@ hermes status
 hermes config
 hermes model
 hermes pairing list
+hermes -p myprofile config   # for additional profiles
 ```
 
 ## Runtime behavior
@@ -123,16 +177,20 @@ hermes pairing list
 Entrypoint (`scripts/entrypoint.sh`) does the following:
 
 - Validates required provider and platform variables
-- Writes runtime env to `${HERMES_HOME}/.env`
+- Writes runtime env to `${HERMES_HOME}/.env` (default profile, index 0)
+- For each profile in `HERMES_PROFILES`: creates profile directory, writes profile `.env` (using pipe-separated index)
 - Creates `${HERMES_HOME}/config.yaml` if missing
 - Persists one-time marker `${HERMES_HOME}/.initialized`
-- Starts `hermes gateway`
+- Starts `hermes gateway` for each profile (default + additional)
+- Monitors all gateway processes; restarts any that crash
 
 ## Troubleshooting
 
 - `401 Missing Authentication header`: provider/key mismatch (often wrong provider auto-selection or missing API key for selected provider).
 - Bot connected but no replies: check allowlist variables and user IDs.
 - Data lost after redeploy: verify Railway volume is mounted at `/data`.
+- Profile gateway not starting: check `HERMES_PROFILES` is set and the profile directory exists on the volume.
+- Wrong token for profile: verify pipe order matches profile order in `HERMES_PROFILES`.
 
 ## Build pinning
 
@@ -155,10 +213,20 @@ Override in Railway if you want to pin a tag or commit.
 ```bash
 docker build -t hermes-railway-template .
 
+# Single profile (default behavior)
 docker run --rm \
-  -e OPENROUTER_API_KEY=sk-or-xxx \
-  -e TELEGRAM_BOT_TOKEN=123456:ABC \
+  -e OPENROUTER_API_KEY=*** \
+  -e TELEGRAM_BOT_TOKEN=*** \
   -e TELEGRAM_ALLOWED_USERS=123456789 \
+  -v "$(pwd)/.tmpdata:/data" \
+  hermes-railway-template
+
+# Multi-profile
+docker run --rm \
+  -e OPENROUTER_API_KEY=*** \
+  -e HERMES_PROFILES=second \
+  -e TELEGRAM_BOT_TOKEN="token1|token2" \
+  -e TELEGRAM_ALLOWED_USERS="111|222,111" \
   -v "$(pwd)/.tmpdata:/data" \
   hermes-railway-template
 ```
